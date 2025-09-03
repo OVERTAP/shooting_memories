@@ -1,9 +1,9 @@
 name: Upbit Monitor
 
 on:
-  workflow_dispatch: # 수동 실행을 위해 추가
+  workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *' # 15분마다 실행
+    - cron: '*/15 * * * *'
 
 jobs:
   build:
@@ -18,12 +18,14 @@ jobs:
       with:
         python-version: '3.10'
 
-    # 이전 실행에서 저장된 스냅샷 파일을 복원
-    - name: Restore snapshot cache
+    # [수정] 캐시할 파일 목록에 .first_run_complete 추가
+    - name: Restore cache
       uses: actions/cache@v4
       id: cache-snapshot
       with:
-        path: snapshot_coins.json
+        path: |
+          snapshot_coins.json
+          .first_run_complete
         key: ${{ runner.os }}-snapshot
 
     - name: Install dependencies
