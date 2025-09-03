@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # --- 상수 정의 ---
 SNAPSHOT_FILE = 'snapshot_coins.json' # 5% 이상 상승 포착 종목 저장 파일
+FIRST_RUN_FILE = '.first_run_complete' # 첫 실행 확인용 파일
 REPORT_INTERVAL_MINUTES = 60 # 리포트 주기 (분)
 
 def load_snapshot():
@@ -20,7 +21,6 @@ def load_snapshot():
         return set()
     try:
         with open(SNAPSHOT_FILE, 'r') as f:
-            # JSON 파일에서 리스트를 불러와 set으로 변환
             return set(json.load(f))
     except (json.JSONDecodeError, IOError) as e:
         logging.error(f"스냅샷 파일 로딩 실패: {e}")
@@ -30,7 +30,6 @@ def save_snapshot(symbols):
     """종목 심볼 집합(set)을 스냅샷 파일에 저장합니다."""
     try:
         with open(SNAPSHOT_FILE, 'w') as f:
-            # set을 list로 변환하여 JSON으로 저장
             json.dump(list(symbols), f, indent=4)
     except IOError as e:
         logging.error(f"스냅샷 파일 저장 실패: {e}")
@@ -56,6 +55,16 @@ async def main():
 
     bot = telegram.Bot(token=bot_token)
     upbit = ccxt.upbit()
+    
+    # --- [추가] 첫 실행 시 환영 메시지 전송 로직 ---
+    if not os.path.exists(FIRST_RUN_FILE):
+        logging.info("첫 실행을 감지했습니다. 환영 메시지를 전송합니다.")
+        welcome_message = "🎉 업비트 모니터링 봇이 시작되었습니다.\n정상적으로 연결되었습니다!"
+        await send_telegram_message(bot, chat_id, welcome_message)
+        # 첫 실행 완료 파일 생성
+        with open(FIRST_RUN_FILE, 'w') as f:
+            f.write('done')
+    # ---------------------------------------------
 
     # --- 스냅샷 및 신규 포착 종목 로직 ---
     try:
@@ -64,15 +73,13 @@ async def main():
         tickers = upbit.fetch_tickers(symbols=krw_symbols)
 
         previous_snapshot = load_snapshot()
-        current_snapshot = set(previous_snapshot) # 이전 기록을 복사하여 시작
+        current_snapshot = set(previous_snapshot)
         newly_detected = set()
 
         logging.info("업비트 KRW 마켓 5% 이상 상승 종목 스캔 시작...")
 
         for symbol, ticker in tickers.items():
-            # 'percentage' 필드가 있고, None이 아니며 5% 이상인 경우
             if ticker.get('percentage') is not None and ticker['percentage'] >= 5:
-                # 이전에 포착되지 않았던 새로운 종목인 경우
                 if symbol not in previous_snapshot:
                     logging.info(f"🚀 신규 5% 이상 상승 포착: {symbol} ({ticker['percentage']:.2f}%)")
                     current_snapshot.add(symbol)
@@ -88,25 +95,22 @@ async def main():
         logging.error(f"종목 스캔 중 오류 발생: {e}")
         await send_telegram_message(bot, chat_id, f"오류 발생: {e}")
 
-    # --- 리포트 전송 로직 (매시 정각에 가까운 시간에 실행될 때) ---
+    # --- 리포트 전송 로직 ---
     now = datetime.now()
-    # GitHub Actions cron 주기가 15분이므로, 0~14분 사이에 실행될 때를 리포트 시간으로 간주
     if now.minute < 15:
         snapshot_to_report = load_snapshot()
         if snapshot_to_report:
             logging.info(f"리포트 시간({now.hour}시). 저장된 {len(snapshot_to_report)}개 종목에 대한 리포트를 전송합니다.")
             
-            message = f"- 지난 1시간 동안 5% 이상 상승을 기록한 종목 목록 -\n"
+            message = f"지난 1시간 동안 5% 이상 상승을 기록한 종목 목록 ({now.hour}시 기준)\n"
             message += "\n".join(sorted(list(snapshot_to_report)))
             
             await send_telegram_message(bot, chat_id, message)
             
-            # 리포트 후 스냅샷 파일 초기화
             logging.info("리포트 전송 완료. 다음 1시간을 위해 스냅샷을 초기화합니다.")
             save_snapshot(set())
         else:
             logging.info(f"리포트 시간({now.hour}시)이지만, 지난 1시간 동안 포착된 종목이 없어 리포트를 건너뜁니다.")
-
 
 if __name__ == "__main__":
     asyncio.run(main())
